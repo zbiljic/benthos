@@ -1,15 +1,19 @@
 package tracer
 
 import (
+	"context"
 	"fmt"
-	"io"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/Jeffail/benthos/v3/internal/docs"
-	"github.com/opentracing/opentracing-go"
-	"github.com/uber/jaeger-client-go"
-	jaegercfg "github.com/uber/jaeger-client-go/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 )
 
 //------------------------------------------------------------------------------
@@ -69,7 +73,7 @@ func NewJaegerConfig() JaegerConfig {
 
 // Jaeger is a tracer with the capability to push spans to a Jaeger instance.
 type Jaeger struct {
-	closer io.Closer
+	prov *tracesdk.TracerProvider
 }
 
 // NewJaeger creates and returns a new Jaeger object.
@@ -80,69 +84,70 @@ func NewJaeger(config Config, opts ...func(Type)) (Type, error) {
 		opt(j)
 	}
 
-	var sampler *jaegercfg.SamplerConfig
+	var sampler tracesdk.Sampler
 	if sType := config.Jaeger.SamplerType; len(sType) > 0 {
-		sampler = &jaegercfg.SamplerConfig{
-			Param:             config.Jaeger.SamplerParam,
-			SamplingServerURL: config.Jaeger.SamplerManagerAddress,
-		}
 		switch strings.ToLower(sType) {
 		case "const":
-			sampler.Type = jaeger.SamplerTypeConst
+			sampler = tracesdk.TraceIDRatioBased(config.Jaeger.SamplerParam)
 		case "probabilistic":
-			sampler.Type = jaeger.SamplerTypeProbabilistic
+			return nil, fmt.Errorf("probabalistic sampling is no longer available: TODO")
 		case "ratelimiting":
-			sampler.Type = jaeger.SamplerTypeRateLimiting
+			return nil, fmt.Errorf("rate limited sampling is no longer available: TODO")
 		case "remote":
-			sampler.Type = jaeger.SamplerTypeRemote
+			// https://github.com/open-telemetry/opentelemetry-go-contrib/pull/936
+			return nil, fmt.Errorf("remote sampling is no longer available: TODO")
 		default:
 			return nil, fmt.Errorf("unrecognised sampler type: %v", sType)
 		}
 	}
 
-	cfg := jaegercfg.Configuration{
-		ServiceName: config.Jaeger.ServiceName,
-		Sampler:     sampler,
-	}
-
-	if tags := config.Jaeger.Tags; len(tags) > 0 {
-		var jTags []opentracing.Tag
-		for k, v := range config.Jaeger.Tags {
-			jTags = append(jTags, opentracing.Tag{
-				Key:   k,
-				Value: v,
-			})
+	// Create the Jaeger exporter
+	var epOpt jaeger.EndpointOption
+	if config.Jaeger.CollectorURL != "" {
+		epOpt = jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(config.Jaeger.CollectorURL))
+	} else {
+		agentURL, err := url.Parse(config.Jaeger.AgentAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse jaeger agent address: %w", err)
 		}
-		cfg.Tags = jTags
+		agentOpts := []jaeger.AgentEndpointOption{
+			jaeger.WithAgentHost(agentURL.Host),
+		}
+		if p := agentURL.Port(); p != "" {
+			agentOpts = append(agentOpts, jaeger.WithAgentPort(agentURL.Port()))
+		}
+		epOpt = jaeger.WithAgentEndpoint(agentOpts...)
 	}
 
-	reporterConf := &jaegercfg.ReporterConfig{}
+	exp, err := jaeger.New(epOpt)
+	if err != nil {
+		return nil, err
+	}
 
+	var attrs []attribute.KeyValue
+	if tags := config.Jaeger.Tags; len(tags) > 0 {
+		for k, v := range config.Jaeger.Tags {
+			attrs = append(attrs, attribute.String(k, v))
+		}
+	}
+
+	var batchOpts []tracesdk.BatchSpanProcessorOption
 	if i := config.Jaeger.FlushInterval; len(i) > 0 {
 		flushInterval, err := time.ParseDuration(i)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse flush interval '%s': %v", i, err)
 		}
-		reporterConf.BufferFlushInterval = flushInterval
-		cfg.Reporter = reporterConf
+		batchOpts = append(batchOpts, tracesdk.WithBatchTimeout(flushInterval))
 	}
 
-	if i := config.Jaeger.AgentAddress; len(i) > 0 {
-		reporterConf.LocalAgentHostPort = i
-		cfg.Reporter = reporterConf
-	}
+	tp := tracesdk.NewTracerProvider(
+		tracesdk.WithBatcher(exp, batchOpts...),
+		tracesdk.WithResource(resource.NewWithAttributes(semconv.SchemaURL, attrs...)),
+		tracesdk.WithSampler(sampler),
+	)
 
-	if i := config.Jaeger.CollectorURL; len(i) > 0 {
-		reporterConf.CollectorEndpoint = i
-	}
-
-	tracer, closer, err := cfg.NewTracer()
-	if err != nil {
-		return nil, err
-	}
-	opentracing.SetGlobalTracer(tracer)
-	j.closer = closer
-
+	otel.SetTracerProvider(tp)
+	j.prov = tp
 	return j, nil
 }
 
@@ -150,9 +155,9 @@ func NewJaeger(config Config, opts ...func(Type)) (Type, error) {
 
 // Close stops the tracer.
 func (j *Jaeger) Close() error {
-	if j.closer != nil {
-		j.closer.Close()
-		j.closer = nil
+	if j.prov != nil {
+		j.prov.Shutdown(context.Background())
+		j.prov = nil
 	}
 	return nil
 }

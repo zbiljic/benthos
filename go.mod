@@ -14,7 +14,6 @@ require (
 	github.com/Azure/go-autorest/autorest/to v0.4.0 // indirect
 	github.com/ClickHouse/clickhouse-go v1.5.1
 	github.com/DataDog/zstd v1.4.8 // indirect
-	github.com/HdrHistogram/hdrhistogram-go v1.1.0 // indirect
 	github.com/Jeffail/gabs/v2 v2.6.1
 	github.com/Jeffail/grok v1.1.0
 	github.com/Masterminds/squirrel v1.5.1
@@ -111,8 +110,6 @@ require (
 	github.com/tilinna/z85 v1.0.0
 	github.com/twmb/franz-go v1.2.6
 	github.com/twmb/franz-go/pkg/kmsg v0.0.0-20211127185622-3b34db0c6d1e
-	github.com/uber/jaeger-client-go v2.24.0+incompatible
-	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
 	github.com/urfave/cli/v2 v2.3.0
 	github.com/vmihailenco/msgpack/v5 v5.3.4
 	github.com/xdg/scram v1.0.3
@@ -122,6 +119,9 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a // indirect
 	go.mongodb.org/mongo-driver v1.7.4
 	go.nanomsg.org/mangos/v3 v3.3.0
+	go.opentelemetry.io/otel v1.2.0
+	go.opentelemetry.io/otel/exporters/jaeger v1.2.0
+	go.opentelemetry.io/otel/sdk v1.2.0
 	go.uber.org/atomic v1.9.0 // indirect
 	golang.org/x/crypto v0.0.0-20211117183948-ae814b36b871
 	golang.org/x/net v0.0.0-20211123203042-d83791d6bcd9
